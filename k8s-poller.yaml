@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: powerwall-poller
+  namespace: powerwall
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: powerwall-poller
+  template:
+    metadata:
+      labels:
+        app: powerwall-poller
+    spec:
+      volumes:
+        - name: tesla-cache
+          persistentVolumeClaim:
+            claimName: tesla-cache-pvc
+        - name: tesla-seed
+          secret:
+            secretName: tesla-oauth-seed
+            items:
+              - key: tesla_token.json
+                path: tesla_token.json
+      initContainers:
+        - name: init-seed-token
+          image: busybox:1.36
+          command: ["/bin/sh","-lc"]
+          args:
+            - >
+              if [ ! -f /cache/tesla_token.json ]; then
+                cp /seed/tesla_token.json /cache/tesla_token.json;
+              fi;
+              echo "Seed token present at /cache/tesla_token.json";
+          volumeMounts:
+            - name: tesla-cache
+              mountPath: /cache
+            - name: tesla-seed
+              mountPath: /seed
+              readOnly: true
+      containers:
+        - name: poller
+          
+          image: powerwall-poller:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TESLA_EMAIL
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: TESLA_EMAIL } }
+            - name: TESLA_CACHE
+              value: /cache/tesla_token.json
+            - name: SNOWFLAKE_ACCOUNT
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_ACCOUNT } }
+            - name: SNOWFLAKE_USER
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_USER } }
+            - name: SNOWFLAKE_PASSWORD
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_PASSWORD } }
+            - name: SNOWFLAKE_ROLE
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_ROLE } }
+            - name: SNOWFLAKE_WAREHOUSE
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_WAREHOUSE } }
+            - name: SNOWFLAKE_DATABASE
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_DATABASE } }
+            - name: SNOWFLAKE_SCHEMA
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: SNOWFLAKE_SCHEMA } }
+            - name: INTERVAL_SECONDS
+              valueFrom: { secretKeyRef: { name: powerwall-env, key: INTERVAL_SECONDS } }
+          volumeMounts:
+            - name: tesla-cache
+              mountPath: /cache
+          livenessProbe:
+            exec:
+              command: ["sh","-c","pgrep -f ingest_live_data.py >/dev/null"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
